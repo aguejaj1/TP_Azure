@@ -1,0 +1,104 @@
+services:
+  # Database PostgreSQL
+  postgres:
+    image: postgres:16-alpine
+    container_name: flexoffice-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword2026
+      POSTGRES_DB: flex_office
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d flex_office"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - flexoffice-network
+
+  # Microservice 1: Authentification & Utilisateurs (JWT)
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: flexoffice-auth-service
+    restart: unless-stopped
+    environment:
+      PORT: 5001
+      NODE_ENV: production
+      JWT_SECRET: production-jwt-secret-key-flex-office-2026
+      JWT_EXPIRES_IN: 24h
+      DATABASE_URL: postgres://postgres:postgrespassword2026@postgres:5432/flex_office
+    ports:
+      - "5001:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - flexoffice-network
+
+  # Microservice 2: Gestion des Réservations & Disponibilités
+  booking-service:
+    build:
+      context: ./services/booking-service
+      dockerfile: Dockerfile
+    container_name: flexoffice-booking-service
+    restart: unless-stopped
+    environment:
+      PORT: 5002
+      NODE_ENV: production
+      JWT_SECRET: production-jwt-secret-key-flex-office-2026
+      AUTH_SERVICE_URL: http://auth-service:5001
+      DATABASE_URL: postgres://postgres:postgrespassword2026@postgres:5432/flex_office
+    ports:
+      - "5002:5002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    networks:
+      - flexoffice-network
+
+  # Application Frontend (React + Vite + Tailwind)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: flexoffice-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - auth-service
+      - booking-service
+    networks:
+      - flexoffice-network
+
+  # Reverse Proxy / Passerelle d'entrée Nginx (Port 80)
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: flexoffice-gateway
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - frontend
+      - auth-service
+      - booking-service
+    networks:
+      - flexoffice-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  flexoffice-network:
+    driver: bridge

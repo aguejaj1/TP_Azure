@@ -1,0 +1,27 @@
+{
+  "name": "flex-office-microservices",
+  "version": "1.0.0",
+  "description": "Système de réservation de salles et bureaux (Flex Office) - Architecture Microservices & CI/CD",
+  "private": true,
+  "scripts": {
+    "install:all": "node scripts/install-all.js",
+    "test:all": "node scripts/test-all.js",
+    "start:auth": "npm.cmd --prefix services/auth-service start",
+    "start:booking": "npm.cmd --prefix services/booking-service start",
+    "start:frontend": "npm.cmd --prefix frontend dev",
+    "start:dev": "node scripts/start-all.js",
+    "docker:up": "docker compose up --build",
+    "docker:down": "docker compose down"
+  },
+  "keywords": [
+    "microservices",
+    "ci-cd",
+    "azure",
+    "docker",
+    "reservation",
+    "react",
+    "nodejs"
+  ],
+  "author": "Antigravity Pair Programmer",
+  "license": "MIT"
+}

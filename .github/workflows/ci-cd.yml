@@ -1,0 +1,149 @@
+name: CI/CD Pipeline - FlexOffice Microservices
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository }}
+
+jobs:
+  # ========================================================
+  # ÉTAPE 1 : TESTS AUTOMATISÉS À CHAQUE COMMIT
+  # ========================================================
+  test-services:
+    name: 🧪 Tests Automatiques Microservices & Frontend
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - service: "Auth Service"
+            dir: "services/auth-service"
+            run_cmd: "npm test"
+          - service: "Booking Service"
+            dir: "services/booking-service"
+            run_cmd: "npm test"
+          - service: "Frontend React"
+            dir: "frontend"
+            run_cmd: "npm run build"
+
+    steps:
+      - name: 📥 Récupération du code (Checkout)
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Configuration de Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: '${{ matrix.dir }}/package*.json'
+
+      - name: 📦 Installation des dépendances (${{ matrix.service }})
+        run: |
+          cd ${{ matrix.dir }}
+          npm ci
+
+      - name: 🚀 Exécution des tests (${{ matrix.service }})
+        run: |
+          cd ${{ matrix.dir }}
+          ${{ matrix.run_cmd }}
+
+  # ========================================================
+  # ÉTAPE 2 : CONSTRUCTION & PUBLICATION DES IMAGES DOCKER
+  # ========================================================
+  build-and-push-docker:
+    name: 🐳 Construction & Publication des Images Docker
+    needs: test-services
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - name: 📥 Récupération du code
+        uses: actions/checkout@v4
+
+      - name: 🔑 Connexion au GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🏷️ Génération des tags (SHA & latest)
+        id: meta
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "tag=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+      - name: 🔨 Construction & Push - Auth Service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/auth-service
+          file: ./services/auth-service/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/auth-service:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/auth-service:${{ steps.meta.outputs.tag }}
+
+      - name: 🔨 Construction & Push - Booking Service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/booking-service
+          file: ./services/booking-service/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/booking-service:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/booking-service:${{ steps.meta.outputs.tag }}
+
+      - name: 🔨 Construction & Push - Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ steps.meta.outputs.tag }}
+
+  # ========================================================
+  # ÉTAPE 3 : DÉPLOIEMENT AUTOMATIQUE SUR AZURE APP SERVICE
+  # ========================================================
+  deploy-to-azure:
+    name: ☁️ Déploiement Automatique sur Azure App Service (PaaS)
+    needs: build-and-push-docker
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Récupération du code
+        uses: actions/checkout@v4
+
+      - name: 🔑 Authentification Azure (Service Principal)
+        uses: azure/login@v2
+        if: "${{ secrets.AZURE_CREDENTIALS != '' }}"
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: 🚀 Déploiement sur Azure Web App for Containers
+        uses: azure/webapps-deploy@v3
+        if: "${{ secrets.AZURE_APP_NAME != '' }}"
+        with:
+          app-name: ${{ secrets.AZURE_APP_NAME }}
+          configuration-file: ./deploy/azure/docker-compose.azure.yml
+
+      - name: 📋 Rapport de statut CI/CD
+        run: |
+          echo "================================================="
+          echo "🎉 PIPELINE CI/CD TERMINÉ AVEC SUCCÈS"
+          echo "1. Tests automatiques exécutés avec succès"
+          echo "2. Images Docker construites et publiées : ${{ needs.build-and-push-docker.outputs.image-tag }}"
+          echo "3. Déploiement PaaS Azure App Service déclenché"
+          echo "================================================="

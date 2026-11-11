@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  # Microservice 1 : Authentification & Utilisateurs (JWT)
+  auth-service:
+    image: ${DOCKER_REGISTRY:-ghcr.io}/${DOCKER_REPO:-flexoffice}/auth-service:latest
+    restart: always
+    environment:
+      PORT: 5001
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET:-production-azure-jwt-secret-key-2026}
+      JWT_EXPIRES_IN: 24h
+      DATABASE_URL: ${AZURE_POSTGRESQL_CONNECTION_STRING}
+    ports:
+      - "5001:5001"
+
+  # Microservice 2 : Réservations Flex Office & Salles
+  booking-service:
+    image: ${DOCKER_REGISTRY:-ghcr.io}/${DOCKER_REPO:-flexoffice}/booking-service:latest
+    restart: always
+    environment:
+      PORT: 5002
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET:-production-azure-jwt-secret-key-2026}
+      AUTH_SERVICE_URL: http://auth-service:5001
+      DATABASE_URL: ${AZURE_POSTGRESQL_CONNECTION_STRING}
+    ports:
+      - "5002:5002"
+    depends_on:
+      - auth-service
+
+  # Frontend Web App (Nginx + React SPA)
+  frontend:
+    image: ${DOCKER_REGISTRY:-ghcr.io}/${DOCKER_REPO:-flexoffice}/frontend:latest
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - auth-service
+      - booking-service

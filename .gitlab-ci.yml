@@ -1,0 +1,81 @@
+# GitLab CI/CD Pipeline - Système de Réservation Microservices FlexOffice
+
+stages:
+  - test
+  - build
+  - deploy
+
+variables:
+  DOCKER_TLS_CERTDIR: ""
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
+  DOCKER_DRIVER: overlay2
+
+default:
+  image: node:20-alpine
+
+# ========================================================
+# STAGE 1 : TESTS AUTOMATIQUES
+# ========================================================
+test:auth-service:
+  stage: test
+  script:
+    - cd services/auth-service
+    - npm ci
+    - npm test
+  artifacts:
+    when: always
+    reports:
+      junit: services/auth-service/junit.xml
+
+test:booking-service:
+  stage: test
+  script:
+    - cd services/booking-service
+    - npm ci
+    - npm test
+
+test:frontend:
+  stage: test
+  script:
+    - cd frontend
+    - npm ci
+    - npm run build
+
+# ========================================================
+# STAGE 2 : BUILD DES IMAGES DOCKER
+# ========================================================
+build:docker:
+  stage: build
+  image: docker:24-cli
+  services:
+    - docker:24-dind
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin
+  script:
+    # Build & Push Auth Service
+    - docker build -t $CI_REGISTRY_IMAGE/auth-service:$IMAGE_TAG -t $CI_REGISTRY_IMAGE/auth-service:latest ./services/auth-service
+    - docker push $CI_REGISTRY_IMAGE/auth-service:$IMAGE_TAG
+    - docker push $CI_REGISTRY_IMAGE/auth-service:latest
+    # Build & Push Booking Service
+    - docker build -t $CI_REGISTRY_IMAGE/booking-service:$IMAGE_TAG -t $CI_REGISTRY_IMAGE/booking-service:latest ./services/booking-service
+    - docker push $CI_REGISTRY_IMAGE/booking-service:$IMAGE_TAG
+    - docker push $CI_REGISTRY_IMAGE/booking-service:latest
+    # Build & Push Frontend
+    - docker build -t $CI_REGISTRY_IMAGE/frontend:$IMAGE_TAG -t $CI_REGISTRY_IMAGE/frontend:latest ./frontend
+    - docker push $CI_REGISTRY_IMAGE/frontend:$IMAGE_TAG
+    - docker push $CI_REGISTRY_IMAGE/frontend:latest
+  only:
+    - main
+
+# ========================================================
+# STAGE 3 : DEPLOIEMENT AZURE APP SERVICE
+# ========================================================
+deploy:azure:
+  stage: deploy
+  image: mcr.microsoft.com/azure-cli:latest
+  script:
+    - az login --service-principal -u $AZURE_CLIENT_ID -p $AZURE_CLIENT_SECRET --tenant $AZURE_TENANT_ID
+    - az webapp config container set --name $AZURE_APP_NAME --resource-group $AZURE_RESOURCE_GROUP --multicontainer-config-type COMPOSE --multicontainer-config-file ./deploy/azure/docker-compose.azure.yml
+    - az webapp restart --name $AZURE_APP_NAME --resource-group $AZURE_RESOURCE_GROUP
+  only:
+    - main
